@@ -20,13 +20,13 @@ return
 
 mbutton::
 
-KeyWait, MButton, T0.3 ; T后数字为多少秒内松开鼠标中键
+KeyWait, MButton, T0.5 ; T后数字为多少秒内松开鼠标中键
 
 If ErrorLevel = 1  ;如果超时
 
    {
-
-sendinput, ^{x}     ;发送《剪切》
+    sendinput, ^{a}     ;发送《粘贴》
+    sendinput, ^{v}     ;发送《粘贴》
 
 }
 
@@ -35,7 +35,6 @@ Else
 {
 
 sendinput, ^{v}     ;发送《粘贴》
-
 }
 
 return

@@ -32,7 +32,8 @@ main()
     Hotkey('!y', (key) => fanyi()) ;打开翻译器
     Hotkey('^!t', (key) => fanyi_clipboard()) ;翻译粘贴板文本
     Hotkey('~Esc', (key) => g_eb.hide()) ;退出
-    Hotkey('^f7', (key) => g_eb.debug()) ;调试
+    Hotkey('^f7', (key)  =>g_eb.debug()) ;调试
+    Hotkey('f7', (key)  =>g_eb.debug()) ;调试
 	HotIfWinActive("ahk_id " g_eb.ui.hwnd)
         Hotkey("!enter", sound_play) ;发音
         Hotkey("enter", (key) => send_command('translate')) ;发送文本
@@ -237,7 +238,7 @@ class Edit_box
         {
             this.bd := bd := Baidu_web_cd()
             bd.set_out_change_call_back(this.on_change.bind(this))
-            bd.set_input_box('我来自百度')
+            bd.set_input_box('我来自有道') ;
         }
 
         if(this.has_key('deepl'))
