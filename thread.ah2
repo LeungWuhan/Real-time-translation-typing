@@ -154,23 +154,42 @@ StrBuf(str, encoding := 'UTF-8')
 
 baiducd(keyword, BaiduFanyiAPPID := '', BaiduFanyiAPPSEC := '', from:="en", to:="zh")
 {
-	salt:=A_Now
-    MD5Sign := StrLower(MD5_str(BaiduFanyiAPPID  keyword  salt BaiduFanyiAPPSEC))
-	URL:=Format("http://api.fanyi.Baidu.com/api/trans/vip/translate?q={1}&from={2}&to={3}&appid={4}&salt={5}&sign={6}",keyword,from,to,BaiduFanyiAPPID,salt,MD5Sign )
-	WebRequest := ComObject("WinHttp.WinHttpRequest.5.1")
-	WebRequest.Open("GET", url)
-	WebRequest.Send()
-	result := WebRequest.ResponseText
+    ; 没有填 key 时直接提示，避免静默失败
+    if(BaiduFanyiAPPID = '' || BaiduFanyiAPPSEC = '')
+        return '未配置百度 APPID / 密钥(settings.json)'
+
+    salt := A_Now
+    ; 注意: sign = MD5(appid + q + salt + key)，q 必须是“未编码”的原文，且用 UTF-8
+    MD5Sign := StrLower(MD5_str(BaiduFanyiAPPID . keyword . salt . BaiduFanyiAPPSEC))
+    ; 请求 URL 里的 q 必须做 URL 编码，否则中文/空格会让签名或请求出错
+    q := EncodeDecodeURI(keyword)
+    URL := Format("https://fanyi-api.baidu.com/api/trans/vip/translate?q={1}&from={2}&to={3}&appid={4}&salt={5}&sign={6}"
+        , q, from, to, BaiduFanyiAPPID, salt, MD5Sign)
+
+    WebRequest := ComObject("WinHttp.WinHttpRequest.5.1")
+    WebRequest.Open("GET", URL)
+    WebRequest.SetRequestHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+    WebRequest.Send()
+    result := WebRequest.ResponseText
     try
     {
         o := JSON.parse(result)
-        result := o['trans_result'][1]['dst']
+        if(o.Has('trans_result'))
+        {
+            ; 多行时拼接所有译文
+            out := ''
+            for line in o['trans_result']
+                out .= line['dst'] . "`n"
+            return RTrim(out, "`n")
+        }
+        ; 把百度返回的错误码/错误信息显示到 ToolTip，方便排查
+        return '百度错误 ' o['error_code'] ': ' o['error_msg']
     }
     catch as e
     {
-        result := ''
+        ; 连 JSON 都解析不了时，回显原始响应
+        return '百度响应异常: ' SubStr(result, 1, 100)
     }
-	return result
 }
 
 MD5_str(str, encoding := 'UTF-8')

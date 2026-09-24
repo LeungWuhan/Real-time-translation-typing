@@ -1,5 +1,6 @@
 ﻿{
-    "cd" : "youdao",
+    "cd" : "baidu",
+    "ui_scale" : 1,
     "all_api" : ["baidu", "youdao", "google"],
     "youdao":
     {
@@ -7,10 +8,10 @@
     },
     "baidu" :
     {
-        "is_open" : 0,
-        "BaiduFanyiAPPID" : "",
-        "BaiduFanyiAPPSEC": "",
-        "is_real_time_translate" : 0
+        "is_open" : 1,
+        "BaiduFanyiAPPID" : "20221121001462516",
+        "BaiduFanyiAPPSEC": "49s3vHc1glMKGSG8UqsH",
+        "is_real_time_translate" : 1
     },
     "sougou" :
     {

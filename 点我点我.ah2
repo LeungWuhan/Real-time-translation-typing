@@ -19,15 +19,28 @@ main()
 main()
 {
     btt('加载中。。。',0, 0,,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
-    global g_all_api := ['baidu', 'youdao', 'deepl']
-    global g_eb := Edit_box(0, 0, 1000, 100)
+    ; 实时翻译 Tab 只在 baidu 和 deepl 之间切换
+    global g_all_api := ['baidu', 'deepl']
     global g_is_ime_char := false
     global g_cursor_x := 0
     global g_cursor_y := 0
-    global g_current_api := 'baidu'
     global g_window_hwnd := 0
 
+    ; ===== 配置 + zmq 后台翻译线程（与 API 版一致，复用 thread.ah2）=====
+    global g_zmq_ctx := zmq_ctx_new()
+    global g_sender2plug := Zmq_send2plug()
+    global g_thread_plug_cd := Worker('#include ' A_scriptdir '/thread.ah2', string(g_sender2plug.ctx))
+    global g_config := Map()
+    loadconfig(&g_config, A_ScriptDir . "/config/setting.json")
+    global g_current_api := g_all_api[1]
+    global g_ui_scale := (g_config.Has('ui_scale') ? g_config['ui_scale'] : 1)
+
+    global g_eb := Edit_box(0, 0, 1000, 100)
     g_eb.hide()
+    loop
+    {
+    } until(g_thread_plug_cd.Ready)
+    g_thread_plug_cd['g_config'] := g_config
 
     Hotkey('!y', (key) => fanyi()) ;打开翻译器
     Hotkey('^!t', (key) => fanyi_clipboard()) ;翻译粘贴板文本
@@ -74,7 +87,7 @@ serpentine_naming(*)
 {
     global g_window_hwnd
     old := A_Clipboard
-    cd_str := g_eb.fanyi_result
+    cd_str := get_result()
     g_eb.hide()
     cd_str := StrLower(cd_str)
     cd_str := RegExReplace(cd_str, 'i)\s+', '_')
@@ -96,7 +109,7 @@ serpentine_naming(*)
 
 copy(*)
 {
-    A_Clipboard := g_eb.fanyi_result
+    A_Clipboard := get_result()
 }
 
 paste(*)
@@ -107,18 +120,20 @@ paste(*)
 
 sound_play(*)
 {
-    data := g_eb.fanyi_result
+    data := get_result()
     is_hz := RegExMatch(data, "\p{Han}")
     data := EncodeDecodeURI(data)
     if(!is_hz)
     {
+        ; 英文：有道英文发音
         PlayMedia('https://dict.youdao.com/dictvoice?audio=' data)
         logger.info('https://dict.youdao.com/dictvoice?audio=' data)
     }
     else
     {
-        PlayMedia('https://api.oick.cn/txt/apiz.php?text=' data '&spd=10')
-        logger.info('https://api.oick.cn/txt/apiz.php?text=' data '&spd=10')
+        ; 中文：有道中文发音（原 api.oick.cn 已失效）
+        PlayMedia('https://dict.youdao.com/dictvoice?le=zh&audio=' data)
+        logger.info('https://dict.youdao.com/dictvoice?le=zh&audio=' data)
     }
 }
 
@@ -128,12 +143,12 @@ send_command(p*)
     try
     {
         data := g_eb.text
-        g_eb.hide()
         old := A_Clipboard
+        g_eb.hide()
         if(p[1] == 'Primitive')
             A_Clipboard := data
         else
-            A_Clipboard := g_eb.fanyi_result
+            A_Clipboard := get_result()
         if(g_window_hwnd)
         {
             try
@@ -171,7 +186,7 @@ tab_send(*)
         current_index := 1
     g_current_api := g_all_api[current_index]
     logger.info('=========' g_current_api)
-    btt('[' g_current_api ']',g_cursor_x, g_cursor_y - 45,,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
+    btt('[' g_current_api ']',g_cursor_x, g_cursor_y - Round(45 * GetScale(WinExist('A'))),,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
     g_eb.draw('tab')
 }
 
@@ -188,8 +203,38 @@ fanyi(*)
     g_cursor_x := x
     g_cursor_y := y
     g_eb.show(x, y)
-    btt('[' g_current_api ']',g_cursor_x, g_cursor_y - 45,,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
+    btt('[' g_current_api ']',g_cursor_x, g_cursor_y - Round(45 * GetScale(WinExist('A'))),,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
     g_eb.draw()
+}
+
+;通过 zmq 把文本发给 thread.ah2 后台线程翻译
+cd(text, x := 0, y := 0)
+{
+    try
+    {
+        send2cd_param := Map()
+        send2cd_param['x'] := x
+        send2cd_param['y'] := y
+        send2cd_param['text'] := text
+        send2cd_param['is_ime_char'] := g_is_ime_char
+        send2cd_param['api'] := g_current_api
+        str := JSON.stringify(send2cd_param)
+        g_sender2plug.pub(str)
+    }
+    catch as e
+    {
+        logger.err(e.Message)
+        return
+    }
+}
+
+;取当前译文：API 语言由 thread.ah2 放进剪贴板，deepl 用网页回调结果
+get_result()
+{
+    global g_current_api
+    if(g_current_api = 'deepl')
+        return g_eb.fanyi_result
+    return A_Clipboard
 }
 
 ON_MESSAGE_WM_CHAR(a*)
@@ -219,36 +264,40 @@ class Edit_box
         this.ui := Direct2DRender(x, y, w, h,,, false)
         this.text := ''
         this.fanyi_result := ''
+        this.show_status := false
+        ; 网页实例；baidu 和 deepl 启动预加载
+        this.bd := ''
+        this.yd := ''
+        this.sg := ''
+        this.dp := ''
 
-        if(this.has_key('sougou'))
-        {
-            this.sg := sg := Sougou_web_cd()
-            sg.set_out_change_call_back(this.on_change.bind(this))
-            sg.set_input_box('我来自搜狗')
-        }
-
-        if(this.has_key('youdao'))
-        {
-            this.yd := yd := Youdao_web_cd()
-            yd.set_out_change_call_back(this.on_change.bind(this))
-            yd.set_input_box('我来自有道')
-        }
-
+        ; 预加载百度网页，保证 F7 秒开（启动会多等十几秒）
         if(this.has_key('baidu'))
         {
             this.bd := bd := Baidu_web_cd()
             bd.set_out_change_call_back(this.on_change.bind(this))
-            bd.set_input_box('我来自有道') ;
+            bd.set_input_box('')
         }
 
+        ; 预加载 deepl 网页（启动会再多等十几秒）
         if(this.has_key('deepl'))
         {
             this.dp := dp := Deepl_web_cd()
             dp.set_out_change_call_back(this.on_change.bind(this))
             dp.set_input_box('我来自Deepl')
         }
-
-        this.show_status := false
+    }
+    ; 兜底：若 deepl 未创建则按需创建（正常启动已预加载）
+    ensure_deepl()
+    {
+        if(!this.dp)
+        {
+            btt('deepl 网页加载中。。。',0, 0,,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
+            dp := Deepl_web_cd()
+            dp.set_out_change_call_back(this.on_change.bind(this))
+            dp.set_input_box(this.text)
+            this.dp := dp
+        }
     }
     has_key(key)
     {
@@ -262,28 +311,23 @@ class Edit_box
     }
     debug()
     {
+        ; F7 固定只打开百度网页，不看当前 API
         try
         {
-            switch(g_current_api)
+            if(!this.bd)
             {
-                case 'baidu':
-                {
-                    ;这里调整了一下横屏的大小
-                    this.bd.show(,, 2000, 550)
-                }
-                case 'sougou':
-                {
-                    this.sg.show(,, 2000, 550)
-                }
-                case 'youdao':
-                {
-                    this.yd.show(,, 2000, 550)
-                }
-                case 'deepl':
-                {
-                    this.dp.show(,, 2000, 550)
-                }
+                btt('baidu 网页加载中。。。',0, 0,,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
+                bd := Baidu_web_cd()
+                bd.set_out_change_call_back(this.on_change.bind(this))
+                bd.set_input_box(this.text)
+                this.bd := bd
             }
+            this.bd.show(,, 2000, 550)
+        }
+        catch as e
+        {
+            logger.err(e.Message)
+            btt('打开网页失败: ' e.Message,0, 0,,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
         }
     }
     on_change(cd ,text)
@@ -294,7 +338,7 @@ class Edit_box
         {
             this.fanyi_result := text
             this.ui.gui.GetPos(&x, &y, &w, &h)
-            btt(cd ':' text,x, y - 45,,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
+            btt(cd ':' text,x, y - Round(45 * GetScale(this.ui.Hwnd)),,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
         }
     }
     show(x := 0, y := 0)
@@ -310,6 +354,7 @@ class Edit_box
         g_is_ime_char := false
         this.show_status := false
         OwnzztooltipEnd()
+        cd('') ; 清掉后台线程的结果 ToolTip
     }
     move(x, y, w := 0, h := 0)
     {
@@ -321,58 +366,75 @@ class Edit_box
         ui := this.ui
         ui.gui.GetPos(&x, &y, &w, &h)
         logger.info(x, y, w, h)
+        ;按窗口所在显示器的 DPI 缩放，和 API 版保持一致
+        scale := GetScale(ui.hwnd)
+        font_size := Round(20 * scale)
+        pad := Round(14 * scale)
+        radius := Round(8 * scale)
+        thickness := Max(1, Round(scale))
         ;计算文字的大小
-        wh := this.ui.GetTextWidthHeight(this.text, 40)
+        wh := this.ui.GetTextWidthHeight(this.text, font_size)
         logger.info(wh)
-        this.move(x, y, wh.width + 150, wh.height + 150)
+        box_w := wh.width + pad * 2
+        box_h := wh.height + pad * 2
+        this.move(x, y, box_w, box_h)
         if(ui.BeginDraw())
         {
-            ui.FillRoundedRectangle(0, 0, wh.width, wh.height, 5, 5, 0xcc1E1E1E)
-            ui.DrawRoundedRectangle(0, 0, wh.width, wh.height, 5, 5, 0xffff0000, 1)
-            ui.DrawText(this.text, 0, 0, 30, 0xFFC9E47E)
+            ui.FillRoundedRectangle(0, 0, box_w, box_h, radius, radius, 0xcc1E1E1E)
+            ui.DrawRoundedRectangle(0, 0, box_w, box_h, radius, radius, 0xffff0000, thickness)
+            ui.DrawText(this.text, pad, pad, font_size, 0xFFC9E47E)
             logger.info(this.text)
             ui.EndDraw()
         }
-        input_text := this.text
+        ;切换 API：把当前文本发给新 API（与 API 版一致）
         if(flag = 'tab')
         {
-            switch(g_current_api)
+            if(g_current_api = 'deepl')
             {
-                case 'baidu':
-                {
-                    this.bd.set_input_box('')
-                }
-                case 'sougou':
-                {
-                    this.sg.set_input_box('')
-                }
-                case 'youdao':
-                {
-                    this.yd.set_input_box('')
-                }
-                case 'deepl':
-                {
-                    this.dp.set_input_box('')
-                }
+                this.ensure_deepl()
+                this.dp.set_input_box(this.text)
             }
+            else
+                cd(this.text, x, y)
+            return
+        }
+        ;末尾空格：立即触发一次
+        if(SubStr(this.text, -1) == A_Space)
+        {
+            if(g_current_api = 'deepl')
+            {
+                this.ensure_deepl()
+                this.dp.set_input_box(this.text)
+            }
+            else
+                cd(this.text, x, y)
+            return
         }
         switch(g_current_api)
         {
             case 'baidu':
             {
-                this.bd.set_input_box(input_text)
+                if(g_config['baidu']['is_real_time_translate'] = 1)
+                    cd(this.text, x, y)
+            }
+            case 'google':
+            {
+                if(g_config['google']['is_real_time_translate'] = 1)
+                    cd(this.text, x, y)
             }
             case 'sougou':
             {
-                this.sg.set_input_box(input_text)
+                if(g_config['sougou']['is_real_time_translate'] = 1)
+                    cd(this.text, x, y)
             }
             case 'youdao':
             {
-                this.yd.set_input_box(input_text)
+                cd(this.text, x, y)
             }
             case 'deepl':
             {
-                this.dp.set_input_box(input_text)
+                this.ensure_deepl()
+                this.dp.set_input_box(this.text)
             }
         }
     }
@@ -390,20 +452,21 @@ class Edit_box
     set_imm(char)
     {
         himc := ImmGetContext(this.ui.Hwnd)
+        imm_scale := GetScale(this.ui.Hwnd)
         composition_form := COMPOSITIONFORM()
-        composition_form.ptCurrentPos.x := 0
-        composition_form.ptCurrentPos.y := 10
+        composition_form.ptCurrentPos.x := Round(14 * imm_scale)
+        composition_form.ptCurrentPos.y := Round(14 * imm_scale)
         composition_form.rcArea.left :=  0
         composition_form.rcArea.top :=  0
-        composition_form.rcArea.right :=  100
-        composition_form.rcArea.bottom := 100
+        composition_form.rcArea.right :=  Round(100 * imm_scale)
+        composition_form.rcArea.bottom := Round(100 * imm_scale)
         composition_form.dwStyle := 0x0020 ;CFS_FORCE_POSITION
         rtn := ImmSetCompositionWindow(himc, composition_form)
 
         candidate_form := CANDIDATEFORM()
         candidate_form.dwStyle := 0x0040 ;CFS_CANDIDATEPOS 
-        candidate_form.ptCurrentPos.x := 0
-        candidate_form.ptCurrentPos.y := 20
+        candidate_form.ptCurrentPos.x := Round(14 * imm_scale)
+        candidate_form.ptCurrentPos.y := Round(30 * imm_scale)
 
         rtn := ImmSetCandidateWindow(himc, candidate_form)
         ImmReleaseContext(this.ui.Hwnd, himc)
@@ -467,6 +530,24 @@ num2utf16(code)
     bf := Buffer(2, 0)
     NumPut('short', code, bf)
     return StrGet(bf, 1, 'UTF-16')
+}
+
+;获取指定窗口所在显示器的缩放系数（96 DPI = 1.0），再乘以 setting.json 的 ui_scale
+GetScale(hwnd := 0)
+{
+    global g_ui_scale
+    dpi := 96
+    try
+    {
+        if(hwnd)
+            dpi := DllCall('user32\GetDpiForWindow', 'ptr', hwnd, 'uint')
+        if(!dpi)
+            dpi := A_ScreenDPI
+    }
+    catch
+        dpi := A_ScreenDPI
+    user_scale := (IsSet(g_ui_scale) ? g_ui_scale : 1)
+    return Max(0.5, dpi / 96) * user_scale
 }
 
 GetCaretPosEx(&x?, &y?, &w?, &h?) 
@@ -581,6 +662,30 @@ CreateHString(str)
 {
     DllCall("Combase\WindowsCreateString", "wstr", str, "uint", StrLen(str), "ptr*", &hString := 0, "HRESULT")
     return { Ptr: hString, __Delete: (_) => DllCall("Combase\WindowsDeleteString", "ptr", _, "HRESULT") }
+}
+
+class Zmq_send2plug
+{
+    __New()
+    {
+        zmq_version(&a := 0, &b := 0, &c := 0)
+        logger.info("zmq版本: ", a, b, c)
+        this.ctx := ctx := g_zmq_ctx
+        this.socket := socket := zmq_socket(ctx, ZMQ_PUB)
+        rtn := zmq_bind(socket, "inproc://main")
+    }
+    __Delete()
+    {
+        zmq_close(this.socket)
+        zmq_ctx_shutdown(this.ctx)
+    }
+    pub(data := unset)
+    {
+        if(IsSet(data) == 1 || InStr(data, '@stop') || InStr(data, '@exit'))
+        {
+            zmq_send_string(this.socket, data,,ZMQ_DONTWAIT)
+        }
+    }
 }
 
 loadconfig(&config, json_path)

@@ -23,6 +23,8 @@ main()
     global g_config := Map()
     loadconfig(&g_config, g_json_path)
     global g_current_api := g_config['cd']
+    ; 手动放大倍数（在 setting.json 里配置 ui_scale，默认 1.0）；最终尺寸 = 20 * DPI/96 * ui_scale
+    global g_ui_scale := (g_config.Has('ui_scale') ? g_config['ui_scale'] : 1)
 
     g_eb.hide()
 	loop
@@ -47,13 +49,15 @@ sound_play(*)
     data := EncodeDecodeURI(data)
     if(!is_hz)
     {
+        ; 英文：有道英文发音
         PlayMedia('https://dict.youdao.com/dictvoice?audio=' data)
         logger.info('https://dict.youdao.com/dictvoice?audio=' data)
     }
     else
     {
-        PlayMedia('https://api.oick.cn/txt/apiz.php?text=' data '&spd=10')
-        logger.info('https://api.oick.cn/txt/apiz.php?text=' data '&spd=10')
+        ; 中文：有道中文发音（原 api.oick.cn 已失效）
+        PlayMedia('https://dict.youdao.com/dictvoice?le=zh&audio=' data)
+        logger.info('https://dict.youdao.com/dictvoice?le=zh&audio=' data)
     }
 }
 
@@ -91,7 +95,7 @@ tab_send(*)
             break
         }
     }
-    ToolTip('[' g_current_api ']', g_cursor_x, g_cursor_y - 28, 1)
+    ToolTip('[' g_current_api ']', g_cursor_x, g_cursor_y - Round(28 * GetScale(WinExist('A'))), 1)
     g_eb.draw('tab')
 }
 
@@ -108,7 +112,8 @@ fanyi(*)
     tp := ''
     if(g_config[g_current_api]['is_real_time_translate'] != 1)
         tp := '非实时配置，需要空格触发, setting.json配置'
-    ToolTip('[' g_current_api ']' tp, g_cursor_x, g_cursor_y - 28, 1)
+    tt_offset := Round(28 * GetScale(WinExist('A')))
+    ToolTip('[' g_current_api ']' tp, g_cursor_x, g_cursor_y - tt_offset, 1)
     g_eb.show(x, y)
     g_eb.draw()
 }
@@ -182,15 +187,23 @@ class Edit_box
         ui := this.ui
         ui.gui.GetPos(&x, &y, &w, &h)
         logger.info(x, y, w, h)
+        ;按窗口所在显示器的 DPI 缩放，适配 4K/高 DPI
+        scale := GetScale(ui.hwnd)
+        font_size := Round(20 * scale)
+        pad := Round(14 * scale)
+        radius := Round(8 * scale)
+        thickness := Max(1, Round(scale))
         ;计算文字的大小
-        wh := this.ui.GetTextWidthHeight(this.text, 20)
+        wh := this.ui.GetTextWidthHeight(this.text, font_size)
         logger.info(wh)
-        this.move(x, y, wh.width + 100, wh.height + 100)
+        box_w := wh.width + pad * 2
+        box_h := wh.height + pad * 2
+        this.move(x, y, box_w, box_h)
         if(ui.BeginDraw())
         {
-            ui.FillRoundedRectangle(0, 0, wh.width, wh.height, 5, 5, 0xcc1E1E1E)
-            ui.DrawRoundedRectangle(0, 0, wh.width, wh.height, 5, 5, 0xffff0000, 1)
-            ui.DrawText(this.text, 0, 0, 20, 0xFFC9E47E)
+            ui.FillRoundedRectangle(0, 0, box_w, box_h, radius, radius, 0xcc1E1E1E)
+            ui.DrawRoundedRectangle(0, 0, box_w, box_h, radius, radius, 0xffff0000, thickness)
+            ui.DrawText(this.text, pad, pad, font_size, 0xFFC9E47E)
             logger.info(this.text)
             ui.EndDraw()
         }
@@ -242,19 +255,20 @@ class Edit_box
     {
         himc := ImmGetContext(this.ui.Hwnd)
         composition_form := COMPOSITIONFORM()
-        composition_form.ptCurrentPos.x := 0
-        composition_form.ptCurrentPos.y := 10
+        imm_scale := GetScale(this.ui.Hwnd)
+        composition_form.ptCurrentPos.x := Round(14 * imm_scale)
+        composition_form.ptCurrentPos.y := Round(14 * imm_scale)
         composition_form.rcArea.left :=  0
         composition_form.rcArea.top :=  0
-        composition_form.rcArea.right :=  100
-        composition_form.rcArea.bottom := 100
+        composition_form.rcArea.right :=  Round(100 * imm_scale)
+        composition_form.rcArea.bottom := Round(100 * imm_scale)
         composition_form.dwStyle := 0x0020 ;CFS_FORCE_POSITION
         rtn := ImmSetCompositionWindow(himc, composition_form)
 
         candidate_form := CANDIDATEFORM()
         candidate_form.dwStyle := 0x0040 ;CFS_CANDIDATEPOS 
-        candidate_form.ptCurrentPos.x := 0
-        candidate_form.ptCurrentPos.y := 20
+        candidate_form.ptCurrentPos.x := Round(14 * imm_scale)
+        candidate_form.ptCurrentPos.y := Round(30 * imm_scale)
 
         rtn := ImmSetCandidateWindow(himc, candidate_form)
         ImmReleaseContext(this.ui.Hwnd, himc)
@@ -319,6 +333,25 @@ num2utf16(code)
     bf := Buffer(2, 0)
     NumPut('short', code, bf)
     return StrGet(bf, 1, 'UTF-16')
+}
+
+;获取指定窗口所在显示器的缩放系数（96 DPI = 1.0，150% = 1.5，200% = 2.0）
+;再乘以 setting.json 里的 ui_scale，方便 4K 用户在 100% 缩放下手动放大
+GetScale(hwnd := 0)
+{
+    global g_ui_scale
+    dpi := 96
+    try
+    {
+        if(hwnd)
+            dpi := DllCall('user32\GetDpiForWindow', 'ptr', hwnd, 'uint')
+        if(!dpi)
+            dpi := A_ScreenDPI
+    }
+    catch
+        dpi := A_ScreenDPI
+    user_scale := (IsSet(g_ui_scale) ? g_ui_scale : 1)
+    return Max(0.5, dpi / 96) * user_scale
 }
 
 GetCaretPosEx(&x?, &y?, &w?, &h?) 
