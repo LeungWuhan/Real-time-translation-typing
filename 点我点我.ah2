@@ -35,7 +35,7 @@ main()
     global g_current_api := g_all_api[1]
     global g_ui_scale := (g_config.Has('ui_scale') ? g_config['ui_scale'] : 1)
 
-    global g_eb := Edit_box(0, 0, 1000, 100)
+    global g_eb := Edit_box(0, 0, 1000, 150)
     g_eb.hide()
     loop
     {
@@ -77,14 +77,26 @@ main()
     btt(help_text,0, 0,,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
 }
 
-fanyi_clipboard(*)
+; 用百度网页翻译指定文本：打开网页 → 聚焦输入框 → 全选 → 粘贴
+web_translate(text)
 {
-    fanyi()
-    g_eb.text := A_Clipboard
-    g_eb.draw()
+    global g_eb
+    if(text = '')
+        return
+    g_eb.show_baidu_web(text)
+    Sleep(200)
+    SendInput('^a')
+    Sleep(200)
+    SendInput('^v')
 }
 
-;用 WebView2 打开并翻译鼠标当前选中的词语（快捷键 Ctrl+Alt+T）
+; 翻译剪贴板文本（快捷键 Ctrl+Alt+Q）——改用网页翻译
+fanyi_clipboard(*)
+{
+    web_translate(A_Clipboard)
+}
+
+; 翻译鼠标当前选中的词语（快捷键 F9）
 fanyi_selection(*)
 {
     global g_eb
@@ -101,14 +113,7 @@ fanyi_selection(*)
         ClipWait(0.6)
         text := A_Clipboard
     }
-    if(text = '')
-        return
-    g_eb.show_baidu_web(text)
-    ; 网页窗口就绪后模拟粘贴，把剪贴板里的选中文本粘进百度输入框
-    Sleep(200)
-    SendInput('^a')
-    Sleep(200)
-    SendInput('^v')
+    web_translate(text)
 }
 
 
@@ -336,10 +341,17 @@ class Edit_box
             bd.set_out_change_call_back(this.on_change.bind(this))
             this.bd := bd
         }
-        this.bd.show(,, 2000, 550)
+        this.show_baidu()
         try WinActivate('ahk_id ' this.bd.ui.Hwnd)
         ; 聚焦并全选网页里的输入框，内容稍后由 Ctrl+V 粘入
         this.bd.set_input_box(text)
+    }
+    ; 显示百度网页窗口（宽度按屏幕自适应，比原来的 2000 更宽）
+    show_baidu()
+    {
+        w := Min(1800, A_ScreenWidth - 60)
+        h := Min(650, A_ScreenHeight - 150)
+        this.bd.show(,, w, h)
     }
     has_key(key)
     {
@@ -364,7 +376,7 @@ class Edit_box
                 bd.set_input_box(this.text)
                 this.bd := bd
             }
-            this.bd.show(,, 2000, 550)
+            this.show_baidu()
         }
         catch as e
         {
