@@ -74,50 +74,47 @@ class Baidu_web_cd extends Web_cd
         input_js :='
         (
             {          
-                let inputbox = document.querySelector("#baidu_translate_input");
-                inputbox.value = "{1}";
-                let e = document.createEvent("HTMLEvents");
-                e.initEvent("input");
-                inputbox.dispatchEvent(e);
+                var tries = 0;
+                function focusBaidu(){
+                    var ta = document.querySelector("textarea[placeholder=\"原文\"]");
+                    if(!ta){
+                        var all = document.querySelectorAll("textarea");
+                        for(var i=0;i<all.length;i++){
+                            if(all[i].offsetParent!==null){ ta=all[i]; break; }
+                        }
+                        if(!ta && all.length) ta = all[0];
+                    }
+                    if(!ta) return false;
+                    ta.focus();
+                    ta.select();
+                    return true;
+                }
+                if(!focusBaidu()){
+                    var timer = setInterval(function(){
+                        if(focusBaidu() || ++tries > 25) clearInterval(timer);
+                    }, 200);
+                }
             }
         )'
         out_put_js := '
         (
             {
                 
-                o = document.querySelector(".output-wrap")
-                function callback3(records) {
-                records.forEach(function(record) {
-                    try
-                    {
-                        aa = o.querySelector('[class="ordinary-output target-output clearfix"]');
-                        console.log(aa.textContent);
-                        obj = window.chrome.webview.hostObjects.ahk;
-                        obj.func(aa.textContent);
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            console.log('');
-                            obj = window.chrome.webview.hostObjects.ahk;
-                            obj.func('');
+                var lastOut;
+                setInterval(function(){
+                    try{
+                        var ta = document.querySelector("textarea[placeholder=\"译文\"]");
+                        if(!ta){
+                            var all = document.querySelectorAll("textarea");
+                            if(all.length) ta = all[all.length-1];
                         }
-                        catch
-                        {
-
+                        var txt = ta ? ta.value : "";
+                        if(txt !== lastOut){
+                            lastOut = txt;
+                            window.chrome.webview.hostObjects.ahk.func(txt);
                         }
-                    }
-                })
-                }
-                var ob3 = new MutationObserver(callback3)
-                ob3.observe(o, {
-                characterDataOldValue: true,
-                attributes: true,
-                childList: true,
-                characterData: true,
-                subtree: true
-                })
+                    }catch(e){}
+                }, 700);
             }
         )'
         super.__New(url, input_js, out_put_js,, 'baidu')
@@ -286,7 +283,13 @@ class Web_cd
 
     set_input_box(text)
     {
-        js := Format(this.input_js, text)
+        ; 转义，避免文本里的引号/反斜杠/换行破坏 JS 字符串
+        esc := text
+        esc := StrReplace(esc, '\', '\\')
+        esc := StrReplace(esc, '"', '\"')
+        esc := StrReplace(esc, "`r", '')
+        esc := StrReplace(esc, "`n", '\n')
+        js := Format(this.input_js, esc)
         return rtn := this.wv.CoreWebView2.ExecuteScript(js, 0)
     }
 

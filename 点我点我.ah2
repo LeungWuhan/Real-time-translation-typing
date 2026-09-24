@@ -43,7 +43,8 @@ main()
     g_thread_plug_cd['g_config'] := g_config
 
     Hotkey('!y', (key) => fanyi()) ;打开翻译器
-    Hotkey('^!t', (key) => fanyi_clipboard()) ;翻译粘贴板文本
+    Hotkey('^!q', (key) => fanyi_clipboard()) ;翻译粘贴板文本
+    Hotkey('F9', (key) => fanyi_selection()) ;用网页翻译鼠标选中的词语（F9）
     Hotkey('~Esc', (key) => g_eb.hide()) ;退出
     Hotkey('^f7', (key)  =>g_eb.debug()) ;调试
     Hotkey('f7', (key)  =>g_eb.debug()) ;调试
@@ -68,7 +69,8 @@ main()
         CTRL F7 : 展示当前API网页原始内容
         ESC : 退出
         PLUS:
-        CTRL + ALT + T 翻译粘贴板文本
+        F9 : 用网页翻译鼠标选中的词语
+        CTRL + ALT + Q 翻译粘贴板文本
         CTRL + C :复制结果
         CTRL + V:打开状态下，输入粘贴板内容
     )'
@@ -80,6 +82,33 @@ fanyi_clipboard(*)
     fanyi()
     g_eb.text := A_Clipboard
     g_eb.draw()
+}
+
+;用 WebView2 打开并翻译鼠标当前选中的词语（快捷键 Ctrl+Alt+T）
+fanyi_selection(*)
+{
+    global g_eb
+    text := ''
+    if(WinActive('ahk_id ' g_eb.ui.hwnd))
+    {
+        ;翻译框自身激活时用框内文本
+        text := g_eb.text
+    }
+    else
+    {
+        A_Clipboard := ''
+        SendInput('^c')
+        ClipWait(0.6)
+        text := A_Clipboard
+    }
+    if(text = '')
+        return
+    g_eb.show_baidu_web(text)
+    ; 网页窗口就绪后模拟粘贴，把剪贴板里的选中文本粘进百度输入框
+    Sleep(200)
+    SendInput('^a')
+    Sleep(200)
+    SendInput('^v')
 }
 
 
@@ -121,20 +150,18 @@ paste(*)
 sound_play(*)
 {
     data := get_result()
-    is_hz := RegExMatch(data, "\p{Han}")
-    data := EncodeDecodeURI(data)
-    if(!is_hz)
-    {
-        ; 英文：有道英文发音
-        PlayMedia('https://dict.youdao.com/dictvoice?audio=' data)
-        logger.info('https://dict.youdao.com/dictvoice?audio=' data)
-    }
-    else
-    {
-        ; 中文：有道中文发音（原 api.oick.cn 已失效）
-        PlayMedia('https://dict.youdao.com/dictvoice?le=zh&audio=' data)
-        logger.info('https://dict.youdao.com/dictvoice?le=zh&audio=' data)
-    }
+    if(data = '')
+        return
+    ;去掉换行，TTS 对换行不友好
+    data := StrReplace(data, "`r", " ")
+    data := StrReplace(data, "`n", " ")
+    ;百度 fanyi 的 TTS：长短句都支持
+    ;（原 api.oick.cn 已失效；有道 dictvoice 超过约 17 字会 HTTP 500，这就是长句不能发音的原因）
+    lan := RegExMatch(data, "\p{Han}") ? 'zh' : 'en'
+    url := 'https://fanyi.baidu.com/gettts?lan=' lan '&spd=5&source=web&text=' EncodeDecodeURI(data)
+    logger.info(url)
+    ;按文本长度给足播放时间，避免长句被默认 5 秒超时截断
+    PlayMedia(url, Max(8000, StrLen(data) * 250))
 }
 
 send_command(p*)
@@ -298,6 +325,21 @@ class Edit_box
             dp.set_input_box(this.text)
             this.dp := dp
         }
+    }
+    ; 用百度网页(WebView2)打开并翻译指定文本
+    show_baidu_web(text)
+    {
+        if(!this.bd)
+        {
+            btt('baidu 网页加载中。。。',0, 0,,OwnzztooltipStyle1,{Transparent:180,DistanceBetweenMouseXAndToolTip:-100,DistanceBetweenMouseYAndToolTip:-20})
+            bd := Baidu_web_cd()
+            bd.set_out_change_call_back(this.on_change.bind(this))
+            this.bd := bd
+        }
+        this.bd.show(,, 2000, 550)
+        try WinActivate('ahk_id ' this.bd.ui.Hwnd)
+        ; 聚焦并全选网页里的输入框，内容稍后由 Ctrl+V 粘入
+        this.bd.set_input_box(text)
     }
     has_key(key)
     {

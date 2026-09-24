@@ -45,20 +45,18 @@ main()
 sound_play(*)
 {
     data := A_Clipboard
-    is_hz := RegExMatch(data, "\p{Han}")
-    data := EncodeDecodeURI(data)
-    if(!is_hz)
-    {
-        ; 英文：有道英文发音
-        PlayMedia('https://dict.youdao.com/dictvoice?audio=' data)
-        logger.info('https://dict.youdao.com/dictvoice?audio=' data)
-    }
-    else
-    {
-        ; 中文：有道中文发音（原 api.oick.cn 已失效）
-        PlayMedia('https://dict.youdao.com/dictvoice?le=zh&audio=' data)
-        logger.info('https://dict.youdao.com/dictvoice?le=zh&audio=' data)
-    }
+    if(data = '')
+        return
+    ;去掉换行，TTS 对换行不友好
+    data := StrReplace(data, "`r", " ")
+    data := StrReplace(data, "`n", " ")
+    ;百度 fanyi 的 TTS：长短句都支持
+    ;（原 api.oick.cn 已失效；有道 dictvoice 超过约 17 字会 HTTP 500，这就是长句不能发音的原因）
+    lan := RegExMatch(data, "\p{Han}") ? 'zh' : 'en'
+    url := 'https://fanyi.baidu.com/gettts?lan=' lan '&spd=5&source=web&text=' EncodeDecodeURI(data)
+    logger.info(url)
+    ;按文本长度给足播放时间，避免长句被默认 5 秒超时截断
+    PlayMedia(url, Max(8000, StrLen(data) * 250))
 }
 
 send_command(p*)
